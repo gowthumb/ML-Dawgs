@@ -36,19 +36,12 @@ Measurement values (acceleration, rotation rate, magnetic field)
 ⚙️ How It Works
 
 Load Data
-
 Both CSVs are read using pandas.read_csv() into DataFrames.
-
 Timestamp Alignment
-
 The IMU and GNSS data are merged based on utcTimeMillis, so each IMU reading gets matched to the nearest GNSS fix (position).
-
 Data Schema Normalization
-
 The code standardizes columns, ensuring consistent naming across both datasets.
-
 Columns from GNSS data are prefixed with Wls... for clarity.
-
 Columns from IMU data include MessageType_x (e.g., UncalAccel, UncalGyro) and measurement axes.
 
 Merging
@@ -72,27 +65,20 @@ Each row now includes both IMU motion and GNSS position at that moment in time.
 🧭 Visualization
 
 After merging, the script generates a 3D trajectory plot of the device’s motion using matplotlib.
-
 X, Y, Z axes: ECEF (Earth-Centered, Earth-Fixed) coordinates in meters.
-
 Each point: Represents the device’s estimated position at a given time.
-
 Path shape: Shows the route or motion pattern captured by the GNSS receiver.
 
 Example:
-
 If you walked in a circle with your phone, the 3D plot would show a curved path representing that circular movement.
 
 📈 Output Graph
 
 The graph typically displays:
-
 A 3D scatter line showing the path traced by GNSS over time.
-
 The line color or animation (if added) can correspond to timestamp progression or IMU activity intensity.
 
 🚀 How to Run
-
 Place your two CSV files (device_gnss.csv and device_imu.csv) in the same directory as the script.
 
 Run:
@@ -101,19 +87,12 @@ python merge_gnss_imu.py
 
 
 The script will:
-
 Print a preview of the merged dataset.
-
 Display the 3D trajectory plot.
 
 💡 Applications
 
 Analyzing motion patterns in pedestrian or vehicle navigation.
-
 Synchronizing GNSS and IMU data for sensor fusion.
-
 Debugging mobile data logs or location-based systems.
-
 Building datasets for ML models in localization.
-
-Would you like me to format this README section with Markdown headings, code blocks, and emojis (so it looks GitHub-ready with nice visuals)? I can polish it for copy–paste use in your repo.
