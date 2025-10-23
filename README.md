@@ -1,4 +1,3 @@
-Perfect 👍 — here’s a **clean, detailed explanation** you can copy straight into your **README.md** to explain what your GNSS–IMU merge code does, how it works, and what the output/graph represents.
 
 ---
 
@@ -118,5 +117,3 @@ The graph typically displays:
 * Building datasets for ML models in localization.
 
 ---
-
-Would you like me to format this README section with **Markdown headings, code blocks, and emojis** (so it looks GitHub-ready with nice visuals)? I can polish it for copy–paste use in your repo.
