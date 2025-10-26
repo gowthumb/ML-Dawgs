@@ -4,48 +4,51 @@ from io import StringIO
 
 
 def read_gnss_log(file_path):
-    
+    """
+    Read GNSS log file including Raw, Status, and IMU data
+    """
     print(f"Reading: {file_path}")
     
     with open(file_path, 'r') as f:
         lines = f.readlines()
     
-    # Separate different types of data
-    raw_lines = []
-    status_lines = []
-    raw_header = None
-    status_header = None
+    # Dictionary to store different data types
+    data_dict = {}
+    headers_dict = {}
     
     for line in lines:
         line = line.strip()
         
         # Find headers (lines starting with #)
         if line.startswith('#'):
-            if 'Raw,' in line:
-                raw_header = line.lstrip('#').strip()
-            elif 'Status,' in line:
-                status_header = line.lstrip('#').strip()
+            # Extract the data type (e.g., "Raw", "Status", "UncalAccel")
+            parts = line.lstrip('#').strip().split(',')
+            if len(parts) > 0:
+                data_type = parts[0].lower()
+                headers_dict[data_type] = line.lstrip('#').strip()
         
         # Collect data lines
-        elif line.startswith('Raw,'):
-            raw_lines.append(line)
-        elif line.startswith('Status,'):
-            status_lines.append(line)
-    
-    print(f"Found {len(raw_lines)} Raw + {len(status_lines)} Status measurements")
+        elif ',' in line:
+            parts = line.split(',')
+            if len(parts) > 0:
+                data_type = parts[0].lower()
+                if data_type not in data_dict:
+                    data_dict[data_type] = []
+                data_dict[data_type].append(line)
     
     # Convert to DataFrames
     result = {}
     
-    if raw_lines and raw_header:
-        csv_text = '\n'.join([raw_header] + raw_lines)
-        result['raw'] = pd.read_csv(StringIO(csv_text), low_memory=False)
-        print(f"✓ Raw data loaded: {result['raw'].shape}")
-    
-    if status_lines and status_header:
-        csv_text = '\n'.join([status_header] + status_lines)
-        result['status'] = pd.read_csv(StringIO(csv_text), low_memory=False)
-        print(f"✓ Status data loaded: {result['status'].shape}")
+    for data_type, data_lines in data_dict.items():
+        if data_type in headers_dict:
+            header = headers_dict[data_type]
+            csv_text = '\n'.join([header] + data_lines)
+            try:
+                df = pd.read_csv(StringIO(csv_text), low_memory=False)
+                result[data_type] = df
+                print(f"✓ {data_type}: {df.shape}")
+            except Exception as e:
+                print(f"⚠️ Error loading {data_type}: {e}")
     
     return result
 
@@ -207,18 +210,18 @@ def preprocess_pipeline(file_path, output_path=None):
     Run complete preprocessing pipeline
     
     Steps:
-    1. Read GNSS log file
+    1. Read GNSS log file (including IMU data)
     2. Clean Raw data (filters + GPS time conversion + time sync + cycle slip detection)
     3. Clean Status data (filters + GPS time conversion + time sync)
     4. Save to CSV if output_path provided
     
-    Returns: dict with 'raw' and 'status' DataFrames
+    Returns: dict with 'raw', 'status', and IMU DataFrames
     """
     print("\n" + "="*60)
     print("GNSS PREPROCESSING PIPELINE")
     print("="*60 + "\n")
     
-    # Step 1: Read
+    # Step 1: Read ALL data (including IMU)
     data = read_gnss_log(file_path)
     result = {}
     
@@ -240,6 +243,13 @@ def preprocess_pipeline(file_path, output_path=None):
         status = synchronize_time(status, data_type='status')
         result['status'] = status
         print(f"✓ Status preprocessing complete: {len(status)} rows")
+    
+    # Step 4: Keep IMU data as-is (no filtering needed)
+    imu_types = ['uncalaccel', 'uncalgyro', 'accel', 'gyro', 'uncalmag', 'mag', 'orientdeg']
+    for imu_type in imu_types:
+        if imu_type in data:
+            result[imu_type] = data[imu_type]
+            print(f"✓ {imu_type.upper()}: {len(data[imu_type])} rows")
     
     print("="*60)
     
@@ -263,14 +273,12 @@ def preprocess_pipeline(file_path, output_path=None):
         else:
             print(f"  ⚠️ WARNING: No time overlap detected!")
     
-    # Step 4: Save
+    # Step 5: Save
     if output_path:
-        if 'raw' in result:
-            result['raw'].to_csv(f'{output_path}_raw.csv', index=False)
-            print(f"\nSaved: {output_path}_raw.csv")
-        if 'status' in result:
-            result['status'].to_csv(f'{output_path}_status.csv', index=False)
-            print(f"Saved: {output_path}_status.csv")
+        for data_type, df in result.items():
+            output_file = f'{output_path}_{data_type}.csv'
+            df.to_csv(output_file, index=False)
+            print(f"Saved: {output_file}")
     
     print("\n" + "="*60 + "\n")
     return result
@@ -291,6 +299,10 @@ if __name__ == "__main__":
     for data_type, df in result.items():
         print(f"\n{data_type.upper()}:")
         print(f"  Rows: {len(df)}")
-        print(f"  Satellites: {df['Svid'].nunique()}")
+        print(f"  Columns: {len(df.columns)}")
+        if 'Svid' in df.columns:
+            print(f"  Satellites: {df['Svid'].nunique()}")
         if 'millisSinceGpsEpoch' in df.columns:
             print(f"  Time range: {df['millisSinceGpsEpoch'].min()} to {df['millisSinceGpsEpoch'].max()}")
+        elif 'utcTimeMillis' in df.columns:
+            print(f"  Time range: {df['utcTimeMillis'].min()} to {df['utcTimeMillis'].max()}")
