@@ -6,18 +6,36 @@ from typing import Dict, List
 # ----------- SCHEMA DEFINITIONS -----------
 # ==========================================
 # Structure: Standardized Name: [List of possible source column names, final dtype]
+#
+# SCHEMA UPDATE EXPLANATION:
+# =========================
+# The original schemas were designed for .txt log files but we're now processing .csv files
+# from the smartphone-decimeter-2022 dataset. The actual column names in the CSV files
+# are different from what was originally expected. Here's what we discovered and fixed:
+#
+# 1. TIME COLUMNS: The CSV files use 'utcTimeMillis' instead of 'ElapsedRealtimeMillis'
+# 2. IMU MEASUREMENTS: The CSV files use 'MeasurementX/Y/Z' instead of 'UncalAccel.X/Y/Z'
+# 3. BIAS COLUMNS: The CSV files use 'BiasX/Y/Z' instead of 'UncalAccel.BiasX/Y/Z'
+# 4. STATUS DATA: No Status messages exist in the dataset - only Raw GNSS data
+#
+# Each schema entry now includes BOTH the original expected names AND the actual CSV names
+# to ensure compatibility with the real data structure.
 
 # GNSS Raw Data Schema (device_gnss.csv - Type: Raw)
+# ===================================================
+# This schema handles the main GNSS satellite measurement data from device_gnss.csv
+# Key change: Added 'utcTimeMillis' as the primary time column (it's what actually exists)
 RAW_SCHEMA = {
     'MessageType': ['MessageType', '# Type', object],
-    # Time Columns 
-    'ElapsedRealtimeMillis': ['ElapsedRealtimeMillis', np.int64],
+    # Time Columns - CRITICAL FIX: Added 'utcTimeMillis' as primary time column
+    # The CSV files actually use 'utcTimeMillis', not 'ElapsedRealtimeMillis'
+    'ElapsedRealtimeMillis': ['utcTimeMillis', 'ElapsedRealtimeMillis', np.int64],
     'TimeNanos': ['TimeNanos', np.int64], # Device clock time in ns
     'ReceivedSvTimeInNanos': ['ReceivedSvTimeInNanos', 'ReceivedSvTimeNanos', np.int64],
     # Derived/Target standardized columns (used in data_uitiles.py)
     'millisSinceGpsEpoch': ['millisSinceGpsEpoch', np.int64], 
     
-    # GNSS Measurement Columns
+    # GNSS Measurement Columns - These remain the same as they match the CSV structure
     'Svid': ['Svid', np.int32],
     'ConstellationType': ['ConstellationType', np.int32],
     'Cn0DbHz': ['Cn0DbHz', np.float64],
@@ -31,6 +49,10 @@ RAW_SCHEMA = {
 }
 
 # GNSS Status Data Schema (device_gnss.csv - Type: Status)
+# =========================================================
+# IMPORTANT: This schema is kept for compatibility but Status messages DO NOT EXIST
+# in the smartphone-decimeter-2022 dataset. The fuser.py has been updated to handle
+# empty Status data gracefully.
 STATUS_SCHEMA = {
     'MessageType': ['MessageType', '# Type', object],
     # Time Column
@@ -42,33 +64,48 @@ STATUS_SCHEMA = {
 }
 
 # IMU Accel Data Schema (device_imu.csv - Type: Accel/UncalAccel)
+# ================================================================
+# CRITICAL FIXES for accelerometer data:
+# 1. Time column: Added 'utcTimeMillis' as primary (what actually exists in CSV)
+# 2. Measurements: Added 'MeasurementX/Y/Z' as primary (actual CSV column names)
+# 3. Bias: Added 'BiasX/Y/Z' as primary (actual CSV column names)
+# The original 'UncalAccel.X/Y/Z' names are kept for backward compatibility
 ACCEL_SCHEMA = {
     'MessageType': ['MessageType', '# Type', object],
-    # IMU Time 
-    'millisSinceBoot': ['millisSinceBoot', 'MillisSinceBoot', 'UncalAccel.MillisSinceBoot', np.int64],
-    # Vector Components
-    'UncalAccel.X': ['UncalAccel.X', 'UncalAccel.uncalX', 'X', np.float64],
-    'UncalAccel.Y': ['UncalAccel.Y', 'UncalAccel.uncalY', 'Y', np.float64],
-    'UncalAccel.Z': ['UncalAccel.Z', 'UncalAccel.uncalZ', 'Z', np.float64],
-    # Bias Estimates (may be missing)
-    'UncalAccel.BiasX': ['UncalAccel.BiasX', 'UncalAccel.biasX', np.float64],
-    'UncalAccel.BiasY': ['UncalAccel.BiasY', 'UncalAccel.biasY', np.float64],
-    'UncalAccel.BiasZ': ['UncalAccel.BiasZ', 'UncalAccel.biasZ', np.float64],
+    # IMU Time - CRITICAL FIX: Added 'utcTimeMillis' as primary time column
+    # The CSV files use 'utcTimeMillis' for both GNSS and IMU data
+    'millisSinceBoot': ['utcTimeMillis', 'millisSinceBoot', 'MillisSinceBoot', 'UncalAccel.MillisSinceBoot', np.int64],
+    # Vector Components - CRITICAL FIX: Added 'MeasurementX/Y/Z' as primary columns
+    # The CSV files actually use 'MeasurementX/Y/Z', not 'UncalAccel.X/Y/Z'
+    'UncalAccel.X': ['MeasurementX', 'UncalAccel.X', 'UncalAccel.uncalX', 'X', np.float64],
+    'UncalAccel.Y': ['MeasurementY', 'UncalAccel.Y', 'UncalAccel.uncalY', 'Y', np.float64],
+    'UncalAccel.Z': ['MeasurementZ', 'UncalAccel.Z', 'UncalAccel.uncalZ', 'Z', np.float64],
+    # Bias Estimates - CRITICAL FIX: Added 'BiasX/Y/Z' as primary columns
+    # The CSV files use 'BiasX/Y/Z', not 'UncalAccel.BiasX/Y/Z'
+    'UncalAccel.BiasX': ['BiasX', 'UncalAccel.BiasX', 'UncalAccel.biasX', np.float64],
+    'UncalAccel.BiasY': ['BiasY', 'UncalAccel.BiasY', 'UncalAccel.biasY', np.float64],
+    'UncalAccel.BiasZ': ['BiasZ', 'UncalAccel.BiasZ', 'UncalAccel.biasZ', np.float64],
 }
 
 # IMU Gyro Data Schema (device_imu.csv - Type: Gyro/UncalGyro)
+# =============================================================
+# CRITICAL FIXES for gyroscope data (same pattern as accelerometer):
+# 1. Time column: Added 'utcTimeMillis' as primary
+# 2. Measurements: Added 'MeasurementX/Y/Z' as primary
+# 3. Bias: Added 'BiasX/Y/Z' as primary
+# The original 'UncalGyro.X/Y/Z' names are kept for backward compatibility
 GYRO_SCHEMA = {
     'MessageType': ['MessageType', '# Type', object],
-    # IMU Time 
-    'millisSinceBoot': ['millisSinceBoot', 'MillisSinceBoot', 'UncalGyro.MillisSinceBoot', np.int64],
-    # Vector Components
-    'UncalGyro.X': ['UncalGyro.X', 'UncalGyro.uncalX', 'X', np.float64],
-    'UncalGyro.Y': ['UncalGyro.Y', 'UncalGyro.uncalY', 'Y', np.float64],
-    'UncalGyro.Z': ['UncalGyro.Z', 'UncalGyro.uncalZ', 'Z', np.float64],
-    # Bias Estimates (may be missing)
-    'UncalGyro.BiasX': ['UncalGyro.BiasX', 'UncalGyro.biasX', np.float64],
-    'UncalGyro.BiasY': ['UncalGyro.BiasY', 'UncalGyro.biasY', np.float64],
-    'UncalGyro.BiasZ': ['UncalGyro.BiasZ', 'UncalGyro.biasZ', np.float64],
+    # IMU Time - CRITICAL FIX: Added 'utcTimeMillis' as primary time column
+    'millisSinceBoot': ['utcTimeMillis', 'millisSinceBoot', 'MillisSinceBoot', 'UncalGyro.MillisSinceBoot', np.int64],
+    # Vector Components - CRITICAL FIX: Added 'MeasurementX/Y/Z' as primary columns
+    'UncalGyro.X': ['MeasurementX', 'UncalGyro.X', 'UncalGyro.uncalX', 'X', np.float64],
+    'UncalGyro.Y': ['MeasurementY', 'UncalGyro.Y', 'UncalGyro.uncalY', 'Y', np.float64],
+    'UncalGyro.Z': ['MeasurementZ', 'UncalGyro.Z', 'UncalGyro.uncalZ', 'Z', np.float64],
+    # Bias Estimates - CRITICAL FIX: Added 'BiasX/Y/Z' as primary columns
+    'UncalGyro.BiasX': ['BiasX', 'UncalGyro.BiasX', 'UncalGyro.biasX', np.float64],
+    'UncalGyro.BiasY': ['BiasY', 'UncalGyro.BiasY', 'UncalGyro.biasY', np.float64],
+    'UncalGyro.BiasZ': ['BiasZ', 'UncalGyro.BiasZ', 'UncalGyro.biasZ', np.float64],
 }
 
 # CRITICAL EXPORT: Dictionary used by data_uitiles.py to standardize columns

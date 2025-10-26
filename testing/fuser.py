@@ -5,6 +5,24 @@ from data_uitiles import read_and_separate_log, apply_sanity_filters, add_time_c
 # Dependencies for feature creation and final aggregation
 from feature import extract_raw_features, extract_status_features, extract_imu_features, add_aggregate_features
 
+# ==========================================
+# ----------- CRITICAL FIXES APPLIED ------
+# ==========================================
+# This file has been updated to work with the smartphone-decimeter-2022 dataset:
+#
+# 1. STATUS DATA HANDLING: The original code required Status data to be present,
+#    but the smartphone-decimeter-2022 dataset contains NO Status messages.
+#    The code now gracefully handles empty Status data.
+#
+# 2. CRITICAL DATA CHECK: Removed the requirement for Status data in the critical
+#    data availability check. Only GNSS Raw and IMU Accel are now required.
+#
+# 3. FEATURE MERGING: Updated the GNSS feature merging logic to handle cases
+#    where Status data is empty, using only Raw features when necessary.
+#
+# 4. SCHEMA COMPATIBILITY: The code now works with the updated schemas in loader.py
+#    that include both original and actual CSV column names.
+
 def synchronize_imu_time(imu_df: pd.DataFrame, gnss_raw_df: pd.DataFrame) -> pd.DataFrame:
     """
     Calculates the time offset between millisSinceBoot (IMU time) and 
@@ -91,16 +109,15 @@ def process_full_log_to_features(job: dict) -> pd.DataFrame:
     imu_gyro = apply_sanity_filters(imu_data.get('gyro', pd.DataFrame({})), 'gyro')
     
     # Check for critical data availability after filtering
-    if raw_df.empty or status_df.empty or imu_accel.empty:
+    # CRITICAL FIX: Removed Status data requirement - it doesn't exist in the dataset
+    # Only GNSS Raw and IMU Accel are required for successful processing
+    if raw_df.empty or imu_accel.empty:
         missing_parts = []
         if raw_df.empty:
             missing_parts.append("GNSS Raw")
-        if status_df.empty:
-            missing_parts.append("GNSS Status")
         if imu_accel.empty:
             missing_parts.append("IMU Accel")
 
-        # --- MODIFIED LOGGING HERE ---
         print(f"Skipping: Critical data is missing after filtering/standardization. Missing components: {', '.join(missing_parts)}.")
         return pd.DataFrame({})
 
@@ -132,11 +149,18 @@ def process_full_log_to_features(job: dict) -> pd.DataFrame:
     # --- 4. GNSS FEATURE EXTRACTION ---
     # GNSS features are extracted using the data that already has the 'millisSinceGpsEpoch' column
     raw_features = extract_raw_features(raw_df)
-    status_features = extract_status_features(status_df)
     
-    # --- 5. MERGING ALL FEATURES ---
-    # Merge GNSS features first
-    gnss_features = pd.merge(raw_features, status_features, on='millisSinceGpsEpoch', how='outer')
+    # Handle Status features (may be empty)
+    # CRITICAL FIX: Status data doesn't exist in smartphone-decimeter-2022 dataset
+    # The code now gracefully handles empty Status data by using only Raw features
+    if not status_df.empty:
+        status_features = extract_status_features(status_df)
+        # Merge GNSS features
+        gnss_features = pd.merge(raw_features, status_features, on='millisSinceGpsEpoch', how='outer')
+    else:
+        # No Status data available, use only Raw features
+        # This is the expected case for the smartphone-decimeter-2022 dataset
+        gnss_features = raw_features
     
     # Then merge with the IMU aggregated features
     final_merged_df = pd.merge(gnss_features, imu_agg_features, on='millisSinceGpsEpoch', how='outer')

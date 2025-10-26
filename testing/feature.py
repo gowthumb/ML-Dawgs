@@ -2,6 +2,19 @@ import pandas as pd
 import numpy as np
 from typing import List # Added List import for clarity, though not strictly necessary in modern Python for simple list type hints
 
+# ==========================================
+# ----------- CRITICAL FIXES APPLIED ------
+# ==========================================
+# This file has been updated to work with the smartphone-decimeter-2022 dataset:
+#
+# 1. IMU COLUMN NAMES: The original code used hardcoded column names like 'accel_x/y/z'
+#    and 'gyro_x/y/z', but the actual CSV files use standardized names from the schema:
+#    - 'UncalAccel.X/Y/Z' for accelerometer data
+#    - 'UncalGyro.X/Y/Z' for gyroscope data
+#
+# 2. SCHEMA COMPATIBILITY: The code now uses the correct column names that match
+#    the updated schemas in loader.py, ensuring proper feature extraction.
+
 # --- Feature Extraction Functions ---
 
 def extract_raw_features(raw_df: pd.DataFrame) -> pd.DataFrame:
@@ -83,20 +96,24 @@ def extract_imu_features(imu_accel_df: pd.DataFrame, imu_gyro_df: pd.DataFrame) 
     window_size = 50 # 50 samples, roughly 500ms at ~100Hz IMU rate
 
     # 1. ACCELEROMETER FEATURES
-    if not imu_accel_df.empty and all(col in imu_accel_df.columns for col in ['accel_x', 'accel_y', 'accel_z']):
+    # CRITICAL FIX: Using correct column names from the updated schema
+    # The CSV files use 'UncalAccel.X/Y/Z' after standardization, not 'accel_x/y/z'
+    if not imu_accel_df.empty and all(col in imu_accel_df.columns for col in ['UncalAccel.X', 'UncalAccel.Y', 'UncalAccel.Z']):
         accel_features = imu_accel_df.copy()
-        # Magnitude
-        accel_features['accel_mag'] = np.sqrt(accel_features['accel_x']**2 + accel_features['accel_y']**2 + accel_features['accel_z']**2)
+        # Magnitude calculation using the correct standardized column names
+        accel_features['accel_mag'] = np.sqrt(accel_features['UncalAccel.X']**2 + accel_features['UncalAccel.Y']**2 + accel_features['UncalAccel.Z']**2)
         # Rolling mean of magnitude
         accel_features['accel_mag_roll_mean'] = accel_features['accel_mag'].rolling(window=window_size, min_periods=1).mean()
         
         all_imu_features.append(accel_features[['millisSinceBoot', 'accel_mag', 'accel_mag_roll_mean']].drop_duplicates(subset=['millisSinceBoot']))
 
     # 2. GYROSCOPE FEATURES
-    if not imu_gyro_df.empty and all(col in imu_gyro_df.columns for col in ['gyro_x', 'gyro_y', 'gyro_z']):
+    # CRITICAL FIX: Using correct column names from the updated schema
+    # The CSV files use 'UncalGyro.X/Y/Z' after standardization, not 'gyro_x/y/z'
+    if not imu_gyro_df.empty and all(col in imu_gyro_df.columns for col in ['UncalGyro.X', 'UncalGyro.Y', 'UncalGyro.Z']):
         gyro_features = imu_gyro_df.copy()
-        # Magnitude
-        gyro_features['gyro_mag'] = np.sqrt(gyro_features['gyro_x']**2 + gyro_features['gyro_y']**2 + gyro_features['gyro_z']**2)
+        # Magnitude calculation using the correct standardized column names
+        gyro_features['gyro_mag'] = np.sqrt(gyro_features['UncalGyro.X']**2 + gyro_features['UncalGyro.Y']**2 + gyro_features['UncalGyro.Z']**2)
         # Rolling mean of magnitude
         gyro_features['gyro_mag_roll_mean'] = gyro_features['gyro_mag'].rolling(window=window_size, min_periods=1).mean()
         

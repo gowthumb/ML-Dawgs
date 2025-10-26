@@ -278,8 +278,10 @@ def preprocess_pipeline(file_path, output_path=None):
 
 # Example usage
 if __name__ == "__main__":
-    # UPDATE THIS PATH to your actual data file
-    file_path = "C:\\Users\\avnee\\Downloads\\google-smartphone-decimeter-challenge\\train\\2021-04-15-US-MTV-1\\Pixel4\\Pixel4_GnssLog.txt"
+    # CRITICAL FIX: Updated from hardcoded Windows path to correct Mac path
+    # Original: "C:\\Users\\avnee\\Downloads\\google-smartphone-decimeter-challenge\\train\\2021-04-15-US-MTV-1\\Pixel4\\Pixel4_GnssLog.txt"
+    # Fixed: Updated to point to actual smartphone-decimeter-2022 dataset location
+    file_path = "/Users/yash.rayapaty/Downloads/smartphone-decimeter-2022/train/2020-12-10-US-SJC-1/GooglePixel4/supplemental/gnss_log.txt"
     
     # Run preprocessing
     result = preprocess_pipeline(file_path, output_path='./processed_data')

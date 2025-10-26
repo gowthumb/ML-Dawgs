@@ -130,7 +130,9 @@ def run_dask_pipeline(all_jobs: list[dict]) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # Define the root directory where your 'train' data is located
-    ROOT_DIR = "./train" 
+    # CRITICAL FIX: Changed from "./train" to "../train" to correctly point to the train folder
+    # The script runs from the testing/ directory, so we need to go up one level to reach ML-Dawgs/train
+    ROOT_DIR = "../train" 
     
     # 1. Scan for jobs
     all_jobs = find_and_pair_files(ROOT_DIR)
