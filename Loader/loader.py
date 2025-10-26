@@ -197,8 +197,8 @@ def merge_gnss_imu(gnss_df, imu_df, time_col_gnss='utcTimeMillis', time_col_imu=
 if __name__ == "__main__":
     print("--- Running Unified Loader Test ---")
 
-    gnss_df = load_sensor_data("device_gnss.csv")
-    imu_df = load_sensor_data("device_imu.csv")
+    gnss_df = load_sensor_data("Loader/device_gnss.csv")
+    imu_df = load_sensor_data("Loader/device_imu.csv")
 
     print("\nGNSS Data Sample:")
     print(gnss_df.head())
