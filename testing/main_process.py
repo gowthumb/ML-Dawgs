@@ -130,9 +130,8 @@ def run_dask_pipeline(all_jobs: list[dict]) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # Define the root directory where your 'train' data is located
-    # CRITICAL FIX: Changed from "./train" to "../train" to correctly point to the train folder
-    # The script runs from the testing/ directory, so we need to go up one level to reach ML-Dawgs/train
-    ROOT_DIR = "../train" 
+    # Processing all 170 datasets from the full smartphone-decimeter-2022 dataset
+    ROOT_DIR = "/Users/yash.rayapaty/Downloads/smartphone-decimeter-2022/train" 
     
     # 1. Scan for jobs
     all_jobs = find_and_pair_files(ROOT_DIR)
@@ -143,8 +142,11 @@ if __name__ == "__main__":
     
     if not final_feature_set.empty:
         # You can save the final merged features here
-        output_file = "all_extracted_features.csv"
+        # Includes GNSS, IMU, and PPK .pos file features
+        output_file = "all_extracted_features_full_170_datasets_with_pos.csv"
         final_feature_set.to_csv(output_file, index=False)
         print(f"\n✅ All features saved to {output_file}")
+        print(f"   Total features: {len(final_feature_set)} rows")
+        print(f"   Total columns: {len(final_feature_set.columns)}")
     else:
         print("\n⚠️ Pipeline finished but no features were extracted.")

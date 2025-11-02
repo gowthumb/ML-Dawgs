@@ -306,6 +306,117 @@ def extract_imu_features(imu_accel_df: pd.DataFrame, imu_gyro_df: pd.DataFrame) 
 
 
 # ============================================================================
+# PPK .POS FILE FEATURE EXTRACTION
+# ============================================================================
+
+def extract_pos_features(pos_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Extract features from RTKLIB .pos file data (Precise Point Positioning solutions).
+    
+    Features include:
+    - Position coordinates (lat, lon, height)
+    - Solution quality metrics (quality flag, number of satellites)
+    - Uncertainty metrics (standard deviations in north/east/up)
+    - Position stability metrics
+    
+    Args:
+        pos_df: DataFrame containing .pos file data with columns:
+               - millisSinceGpsEpoch
+               - latitude, longitude, height
+               - quality, num_satellites
+               - sdn, sde, sdu (standard deviations)
+               - sdne, sdeu, sdun (covariances)
+               - age, ratio
+    
+    Returns:
+        DataFrame with extracted .pos features aggregated by millisSinceGpsEpoch
+    """
+    if pos_df.empty:
+        return pd.DataFrame({})
+    
+    features = pos_df.copy()
+    
+    # === PER-MEASUREMENT FEATURES ===
+    
+    # Feature 1: Horizontal position uncertainty (meters)
+    features['horizontal_uncertainty'] = np.sqrt(features['sdn']**2 + features['sde']**2)
+    
+    # Feature 2: 3D position uncertainty (meters)
+    features['position_uncertainty_3d'] = np.sqrt(features['sdn']**2 + features['sde']**2 + features['sdu']**2)
+    
+    # Feature 3: Solution quality indicator (higher is better: 1=fix, 2=float, 3=sbas, 4=dgps, 5=single, 6=ppp)
+    # Invert so that fix=1 is highest quality
+    quality_map = {1: 6, 2: 5, 3: 3, 4: 4, 5: 2, 6: 1}  # Fix=6 (best), single=2 (worst)
+    features['solution_quality_score'] = features['quality'].map(quality_map).fillna(0)
+    
+    # Feature 4: Position velocity (change in position over time)
+    features = features.sort_values('millisSinceGpsEpoch')
+    
+    # Calculate position differences (lat/lon in degrees, height in meters)
+    # Convert lat/lon to approximate meters (rough approximation: 1 deg ≈ 111km)
+    features['lat_diff'] = features['latitude'].diff().fillna(0)
+    features['lon_diff'] = features['longitude'].diff().fillna(0)
+    features['height_diff'] = features['height'].diff().fillna(0)
+    
+    # Time difference in seconds
+    features['time_diff_sec'] = features['millisSinceGpsEpoch'].diff() / 1000.0
+    features.loc[features['time_diff_sec'] == 0, 'time_diff_sec'] = 0.01  # Avoid division by zero
+    
+    # Position velocity in m/s (rough conversion)
+    features['position_velocity'] = np.sqrt(
+        (features['lat_diff'] * 111000)**2 + 
+        (features['lon_diff'] * 111000 * np.cos(np.radians(features['latitude'])))**2 + 
+        features['height_diff']**2
+    ) / features['time_diff_sec']
+    
+    # Feature 5: Position stability (rolling std of position)
+    window_size = 10  # 10 samples ≈ 1 second if 10ms resolution
+    features['position_stability'] = features['position_velocity'].rolling(
+        window=window_size, min_periods=1
+    ).std().fillna(0)
+    
+    # === AGGREGATE FEATURES (per time epoch) ===
+    
+    pos_features = features.groupby('millisSinceGpsEpoch').agg(
+        # Position
+        mean_latitude=('latitude', 'mean'),
+        mean_longitude=('longitude', 'mean'),
+        mean_height=('height', 'mean'),
+        
+        # Quality metrics
+        mean_quality=('quality', 'mean'),
+        max_quality=('quality', 'max'),
+        mean_num_satellites=('num_satellites', 'mean'),
+        max_num_satellites=('num_satellites', 'max'),
+        mean_solution_quality_score=('solution_quality_score', 'mean'),
+        
+        # Uncertainty metrics
+        mean_horizontal_uncertainty=('horizontal_uncertainty', 'mean'),
+        max_horizontal_uncertainty=('horizontal_uncertainty', 'max'),
+        mean_position_uncertainty_3d=('position_uncertainty_3d', 'mean'),
+        mean_sdn=('sdn', 'mean'),
+        mean_sde=('sde', 'mean'),
+        mean_sdu=('sdu', 'mean'),
+        
+        # Position dynamics
+        mean_position_velocity=('position_velocity', 'mean'),
+        std_position_velocity=('position_velocity', 'std'),
+        mean_position_stability=('position_stability', 'mean'),
+        
+        # Additional metrics
+        mean_age=('age', 'mean'),
+        mean_ratio=('ratio', 'mean')
+    ).reset_index()
+    
+    # Fill NaN values in std columns
+    for col in pos_features.columns:
+        if 'std' in col or 'stability' in col:
+            pos_features[col] = pos_features[col].fillna(0)
+    
+    return pos_features
+
+
+# ============================================================================
 # AGGREGATE FEATURES (Post-Merge)
 # ============================================================================
 

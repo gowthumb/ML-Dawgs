@@ -213,12 +213,118 @@ def add_time_columns(raw_df: pd.DataFrame) -> pd.DataFrame:
     df['millisSinceBoot_raw'] = (df['TimeNanos'] / 1_000_000).astype(np.float64)
 
     # 2. Calculate millisSinceGpsEpoch (Absolute time from GPS Epoch)
-    # GPS Epoch offset from Unix Epoch is 315964800000ms (1980-01-06T00:00:00Z)
+    # FIXED: GPS Epoch is LATER than Unix Epoch (1980-01-06 vs 1970-01-01)
+    # So to convert Unix time to GPS epoch time: SUBTRACT the offset
+    # GPS Epoch offset: 315964800000ms (1980-01-06T00:00:00Z is 315964800 seconds after Unix epoch)
     GPS_EPOCH_OFFSET_MILLIS = 315964800000 
-    df['millisSinceGpsEpoch'] = df['ElapsedRealtimeMillis'].astype(np.int64) + GPS_EPOCH_OFFSET_MILLIS
+    # utcTimeMillis (ElapsedRealtimeMillis) is Unix time, so subtract offset to get GPS epoch time
+    df['millisSinceGpsEpoch'] = df['ElapsedRealtimeMillis'].astype(np.int64) - GPS_EPOCH_OFFSET_MILLIS
     
     # Final cleanup and rounding for absolute time (Round to nearest 10ms for better merging/aggregation later)
     df.dropna(subset=['millisSinceGpsEpoch'], inplace=True)
     df['millisSinceGpsEpoch'] = df['millisSinceGpsEpoch'].round(-1).astype(np.int64)
     
     return df
+
+
+def read_pos_file(file_path: str) -> pd.DataFrame:
+    """
+    Reads and parses an RTKLIB .pos file containing precise positioning solutions.
+    
+    The .pos file format is:
+    % GPST          latitude(deg) longitude(deg)  height(m)   Q  ns   sdn(m)   sde(m)   sdu(m)  sdne(m)  sdeu(m)  sdun(m) age(s)  ratio
+    where:
+    - GPST: GPS week and seconds
+    - latitude, longitude, height: Position in WGS84/ellipsoidal
+    - Q: Quality flag (1=fix, 2=float, 3=sbas, 4=dgps, 5=single, 6=ppp)
+    - ns: Number of satellites
+    - sdn, sde, sdu: Standard deviations in north, east, up (meters)
+    - sdne, sdeu, sdun: Covariances
+    - age: Age (seconds)
+    - ratio: Ratio
+    
+    Args:
+        file_path: Path to the .pos file
+        
+    Returns:
+        DataFrame with parsed .pos data, including millisSinceGpsEpoch column
+    """
+    if not os.path.exists(file_path):
+        print(f"Warning: .pos file not found: {file_path}")
+        return pd.DataFrame({})
+    
+    # GPS epoch: January 6, 1980 00:00:00 UTC
+    # GPS time in seconds = GPS week * 604800 + GPS seconds
+    # Convert to milliseconds since GPS epoch
+    
+    data_lines = []
+    
+    try:
+        with open(file_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                # Skip header lines and empty lines
+                if line.startswith('%') or not line:
+                    continue
+                
+                # Parse data line
+                parts = line.split()
+                if len(parts) < 14:
+                    continue
+                
+                try:
+                    gps_week = int(parts[0])
+                    gps_seconds = float(parts[1])
+                    
+                    # Convert GPS week+seconds to milliseconds since GPS epoch
+                    # GPS epoch: Jan 6, 1980 00:00:00 UTC
+                    # millisSinceGpsEpoch = (gps_week * 604800 + gps_seconds) * 1000
+                    millis_since_gps_epoch = int((gps_week * 604800 + gps_seconds) * 1000)
+                    
+                    # Round to nearest 10ms for consistency with other data
+                    millis_since_gps_epoch = int((millis_since_gps_epoch / 10) * 10)
+                    
+                    latitude = float(parts[2])
+                    longitude = float(parts[3])
+                    height = float(parts[4])
+                    quality = int(parts[5])
+                    num_satellites = int(parts[6])
+                    sdn = float(parts[7])
+                    sde = float(parts[8])
+                    sdu = float(parts[9])
+                    sdne = float(parts[10])
+                    sdeu = float(parts[11])
+                    sdun = float(parts[12])
+                    age = float(parts[13])
+                    ratio = float(parts[14]) if len(parts) > 14 else 0.0
+                    
+                    data_lines.append({
+                        'millisSinceGpsEpoch': millis_since_gps_epoch,
+                        'latitude': latitude,
+                        'longitude': longitude,
+                        'height': height,
+                        'quality': quality,
+                        'num_satellites': num_satellites,
+                        'sdn': sdn,  # Standard deviation north (m)
+                        'sde': sde,  # Standard deviation east (m)
+                        'sdu': sdu,  # Standard deviation up (m)
+                        'sdne': sdne,  # Covariance north-east
+                        'sdeu': sdeu,  # Covariance east-up
+                        'sdun': sdun,  # Covariance up-north
+                        'age': age,
+                        'ratio': ratio
+                    })
+                except (ValueError, IndexError) as e:
+                    continue
+        
+        if not data_lines:
+            print(f"Warning: No valid data found in .pos file: {file_path}")
+            return pd.DataFrame({})
+        
+        df = pd.DataFrame(data_lines)
+        print(f"✓ Read .pos file: {len(df)} rows from {file_path}")
+        return df
+        
+    except Exception as e:
+        print(f"Error reading .pos file {file_path}: {e}")
+        return pd.DataFrame({})
