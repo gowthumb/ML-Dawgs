@@ -77,7 +77,7 @@ def synchronize_imu_time(imu_df: pd.DataFrame, gnss_raw_df: pd.DataFrame) -> pd.
     if 'millisSinceBoot' not in imu_df.columns:
         print("Synchronization failed: IMU dataframe missing 'millisSinceBoot' column.")
         return pd.DataFrame({})
-
+        
     # FIXED: IMU's millisSinceBoot is actually utcTimeMillis (Unix time)
     # Convert directly to GPS epoch time using the same offset as GNSS
     # GPS Epoch is LATER than Unix Epoch, so we SUBTRACT the offset
@@ -289,6 +289,45 @@ def process_full_log_to_features(job: dict) -> pd.DataFrame:
     # Add identifying columns back
     final_merged_df['drive_id'] = job['drive_id']
     final_merged_df['phone_id'] = job['phone_id']
+    
+    # --- 6.5 ENSURE CONSISTENT COLUMN ORDER ---
+    # Define standard column order for consistent output across all datasets
+    # This ensures that columns are in the same order regardless of merge sequence
+    STANDARD_COLUMN_ORDER = [
+        # Time column first (required)
+        'millisSinceGpsEpoch',
+        
+        # IMU features (base features)
+        'accel_mag_mean', 'accel_mag_std', 
+        'gyro_mag_mean', 'gyro_mag_std',
+        'accel_mag_roll_mean', 'gyro_mag_roll_mean',
+        
+        # GNSS features (if available)
+        'num_sats', 'mean_cn0', 'std_cn0', 'max_cn0', 'min_cn0', 
+        'mean_cn0_norm', 'max_sv_time_diff', 'mean_cn0_smooth',
+        'std_cn0_rate', 'mean_pseudorange', 'std_pseudorange',
+        'mean_doppler', 'num_cycle_slips', 'cn0_trend', 'num_sats_std_5s',
+        
+        # POS features (if available)
+        'mean_latitude', 'mean_longitude', 'mean_height',
+        'mean_quality', 'max_quality', 'mean_num_satellites', 
+        'max_num_satellites', 'mean_solution_quality_score',
+        'mean_horizontal_uncertainty', 'max_horizontal_uncertainty',
+        'mean_position_uncertainty_3d', 'mean_sdn', 'mean_sde', 'mean_sdu',
+        'mean_age', 'mean_ratio', 'mean_position_velocity',
+        'std_position_velocity', 'mean_position_stability',
+        
+        # Aggregate features (from add_aggregate_features)
+        'accel_mag_std_1s_roll', 'hae_std_roll', 'is_stationary', 'high_qual_sat_ratio',
+        
+        # Identifiers (always last)
+        'drive_id', 'phone_id',
+    ]
+    
+    # Reorder columns: existing columns in standard order, then any extras
+    existing_cols = [col for col in STANDARD_COLUMN_ORDER if col in final_merged_df.columns]
+    extra_cols = [col for col in final_merged_df.columns if col not in STANDARD_COLUMN_ORDER]
+    final_merged_df = final_merged_df[existing_cols + extra_cols]
     
     print(f"✅ Success: Extracted {len(final_merged_df)} feature rows.")
     return final_merged_df.sort_values('millisSinceGpsEpoch').reset_index(drop=True)

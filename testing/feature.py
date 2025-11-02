@@ -56,9 +56,16 @@ def extract_raw_features(raw_df: pd.DataFrame) -> pd.DataFrame:
         features['carrier_phase_rate'] = features.groupby('Svid')['carrier_phase_m'].diff().fillna(0)
     
     # Feature 5: Pseudorange computation (if possible)
-    if all(col in features.columns for col in ['TimeNanos', 'ReceivedSvTimeNanos']):
+    # Check for standardized column name (ReceivedSvTimeInNanos) or alternate (ReceivedSvTimeNanos)
+    received_time_col = None
+    if 'ReceivedSvTimeInNanos' in features.columns:
+        received_time_col = 'ReceivedSvTimeInNanos'
+    elif 'ReceivedSvTimeNanos' in features.columns:
+        received_time_col = 'ReceivedSvTimeNanos'
+    
+    if received_time_col and 'TimeNanos' in features.columns:
         SPEED_OF_LIGHT = 299792458  # m/s
-        features['travel_time_ns'] = features['TimeNanos'] - features['ReceivedSvTimeNanos']
+        features['travel_time_ns'] = features['TimeNanos'] - features[received_time_col]
         features['pseudorange_m'] = (features['travel_time_ns'] * SPEED_OF_LIGHT / 1e9)
         
         # Sanity filter for pseudorange (20,000 km to 30,000 km typical)
@@ -210,12 +217,16 @@ def extract_imu_features(imu_accel_df: pd.DataFrame, imu_gyro_df: pd.DataFrame) 
 
     # 1. ACCELEROMETER FEATURES
     # Handle both column naming conventions
+    # Note: After standardization in data_uitiles.py, columns are 'UncalAccel.X/Y/Z'
+    # But we check for both formats for robustness
     accel_cols = None
     if not imu_accel_df.empty:
-        if all(col in imu_accel_df.columns for col in ['accel_x', 'accel_y', 'accel_z']):
-            accel_cols = ('accel_x', 'accel_y', 'accel_z')
-        elif all(col in imu_accel_df.columns for col in ['UncalAccel.X', 'UncalAccel.Y', 'UncalAccel.Z']):
+        # Check standardized names FIRST (expected after standardization)
+        if all(col in imu_accel_df.columns for col in ['UncalAccel.X', 'UncalAccel.Y', 'UncalAccel.Z']):
             accel_cols = ('UncalAccel.X', 'UncalAccel.Y', 'UncalAccel.Z')
+        # Fallback to alternative naming (if data not yet standardized)
+        elif all(col in imu_accel_df.columns for col in ['accel_x', 'accel_y', 'accel_z']):
+            accel_cols = ('accel_x', 'accel_y', 'accel_z')
     
     if accel_cols:
         accel_features = imu_accel_df.copy()
@@ -257,12 +268,16 @@ def extract_imu_features(imu_accel_df: pd.DataFrame, imu_gyro_df: pd.DataFrame) 
 
     # 2. GYROSCOPE FEATURES
     # Handle both column naming conventions
+    # Note: After standardization in data_uitiles.py, columns are 'UncalGyro.X/Y/Z'
+    # But we check for both formats for robustness
     gyro_cols = None
     if not imu_gyro_df.empty:
-        if all(col in imu_gyro_df.columns for col in ['gyro_x', 'gyro_y', 'gyro_z']):
-            gyro_cols = ('gyro_x', 'gyro_y', 'gyro_z')
-        elif all(col in imu_gyro_df.columns for col in ['UncalGyro.X', 'UncalGyro.Y', 'UncalGyro.Z']):
+        # Check standardized names FIRST (expected after standardization)
+        if all(col in imu_gyro_df.columns for col in ['UncalGyro.X', 'UncalGyro.Y', 'UncalGyro.Z']):
             gyro_cols = ('UncalGyro.X', 'UncalGyro.Y', 'UncalGyro.Z')
+        # Fallback to alternative naming (if data not yet standardized)
+        elif all(col in imu_gyro_df.columns for col in ['gyro_x', 'gyro_y', 'gyro_z']):
+            gyro_cols = ('gyro_x', 'gyro_y', 'gyro_z')
     
     if gyro_cols:
         gyro_features = imu_gyro_df.copy()
@@ -398,14 +413,14 @@ def extract_pos_features(pos_df: pd.DataFrame) -> pd.DataFrame:
         mean_sde=('sde', 'mean'),
         mean_sdu=('sdu', 'mean'),
         
+        # Additional metrics
+        mean_age=('age', 'mean'),
+        mean_ratio=('ratio', 'mean'),
+        
         # Position dynamics
         mean_position_velocity=('position_velocity', 'mean'),
         std_position_velocity=('position_velocity', 'std'),
-        mean_position_stability=('position_stability', 'mean'),
-        
-        # Additional metrics
-        mean_age=('age', 'mean'),
-        mean_ratio=('ratio', 'mean')
+        mean_position_stability=('position_stability', 'mean')
     ).reset_index()
     
     # Fill NaN values in std columns
