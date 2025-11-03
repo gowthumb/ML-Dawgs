@@ -284,6 +284,14 @@ def process_full_log_to_features(job: dict) -> pd.DataFrame:
         print(f"⚠️ No .pos file found for {job['drive_id']}/{job['phone_id']}")
 
     # --- 6. FINAL CLEANUP ---
+    # Prepare a real UTC timestamp index for correct time-based rolling in feature aggregation
+    if not final_merged_df.empty and 'millisSinceGpsEpoch' in final_merged_df.columns:
+        GPS_EPOCH_START = pd.Timestamp('1980-01-06 00:00:00', tz='UTC')
+        final_merged_df['timestamp_utc'] = GPS_EPOCH_START + pd.to_timedelta(
+            final_merged_df['millisSinceGpsEpoch'].astype('int64'), unit='ms'
+        )
+        final_merged_df = final_merged_df.set_index('timestamp_utc').sort_index()
+
     final_merged_df = add_aggregate_features(final_merged_df)
 
     # Add identifying columns back
@@ -329,5 +337,36 @@ def process_full_log_to_features(job: dict) -> pd.DataFrame:
     extra_cols = [col for col in final_merged_df.columns if col not in STANDARD_COLUMN_ORDER]
     final_merged_df = final_merged_df[existing_cols + extra_cols]
     
+    # --- 7. DIAGNOSTICS: Merge coverage and null percentages ---
+    try:
+        total_rows = len(final_merged_df)
+        total_cells = total_rows * len(final_merged_df.columns) if total_rows > 0 else 0
+
+        # Presence heuristics per source
+        imu_keys = [c for c in ['accel_mag_mean', 'gyro_mag_mean'] if c in final_merged_df.columns]
+        gnss_keys = [c for c in ['num_sats', 'mean_cn0', 'mean_doppler'] if c in final_merged_df.columns]
+        pos_keys = [c for c in ['mean_latitude', 'mean_quality', 'mean_position_uncertainty_3d'] if c in final_merged_df.columns]
+
+        imu_rows = final_merged_df[imu_keys].notna().any(axis=1).sum() if imu_keys else 0
+        gnss_rows = final_merged_df[gnss_keys].notna().any(axis=1).sum() if gnss_keys else 0
+        pos_rows = final_merged_df[pos_keys].notna().any(axis=1).sum() if pos_keys else 0
+
+        imu_pct = (imu_rows / total_rows * 100) if total_rows else 0.0
+        gnss_merge_pct = (gnss_rows / total_rows * 100) if total_rows else 0.0
+        pos_merge_pct = (pos_rows / total_rows * 100) if total_rows else 0.0
+
+        overall_null_pct = 0.0
+        if total_cells:
+            overall_null_pct = float(final_merged_df.isna().sum().sum()) / float(total_cells) * 100.0
+
+        print(
+            f"Merge coverage → IMU: {imu_pct:.1f}% | GNSS-aligned: {gnss_merge_pct:.1f}% | POS-aligned: {pos_merge_pct:.1f}%"
+        )
+        print(
+            f"Nulls → overall cell null percentage: {overall_null_pct:.1f}% over {total_rows} rows and {len(final_merged_df.columns)} cols"
+        )
+    except Exception as diag_e:
+        print(f"⚠️ Diagnostics failed: {diag_e}")
+
     print(f"✅ Success: Extracted {len(final_merged_df)} feature rows.")
     return final_merged_df.sort_values('millisSinceGpsEpoch').reset_index(drop=True)

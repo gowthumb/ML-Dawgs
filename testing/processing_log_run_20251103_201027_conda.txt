@@ -1,0 +1,3 @@
+/var/folders/lr/w0jvpfgx2p35y6s94t2grhzr0000gp/T/tmpfq1hsojr: line 3: 72618 Segmentation fault: 11  python main_process.py
+
+ERROR conda.cli.main_run:execute(124): `conda run python main_process.py` failed. (See above for error)

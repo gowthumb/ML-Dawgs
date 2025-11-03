@@ -444,33 +444,44 @@ def add_aggregate_features(merged_df: pd.DataFrame) -> pd.DataFrame:
         return merged_df
     
     features = merged_df.copy()
-    
-    # Assuming 10ms resolution, a 1-second window is 100 data points
-    window_1s = 100 
-    window_5s = 500
+
+    # Ensure a DateTimeIndex for time-based rolling windows
+    if not isinstance(features.index, pd.DatetimeIndex):
+        # Build timestamp index from GPS epoch millis if needed
+        if 'millisSinceGpsEpoch' in features.columns:
+            GPS_EPOCH_START = pd.Timestamp('1980-01-06 00:00:00', tz='UTC')
+            features['timestamp_utc'] = GPS_EPOCH_START + pd.to_timedelta(
+                features['millisSinceGpsEpoch'].astype('int64'), unit='ms'
+            )
+            features = features.set_index('timestamp_utc').sort_index()
+        else:
+            # Fallback: cannot compute time-based windows without time; return as-is
+            return features
     
     # Feature 1: Rolling std of IMU magnitude (motion stability)
     if 'accel_mag_mean' in features.columns:
         features['accel_mag_std_1s_roll'] = features['accel_mag_mean'].rolling(
-            window=window_1s, min_periods=1
+            window='1s', min_periods=1
         ).std().fillna(0)
     
     # Feature 2: Rolling mean of HAE std (position confidence)
     if 'hae_std' in features.columns:
+        # Original used 20 rows (~200ms at 10ms); convert to time-based
         features['hae_std_roll'] = features['hae_std'].rolling(
-            window=20, min_periods=1
+            window='200ms', min_periods=1
         ).mean().fillna(0)
     
     # Feature 3: CN0 trend (improving or degrading signal)
     if 'mean_cn0' in features.columns:
+        # Original used 10 rows (~100ms); convert to time-based
         features['cn0_trend'] = features['mean_cn0'].diff().rolling(
-            window=10, min_periods=1
+            window='100ms', min_periods=1
         ).mean().fillna(0)
     
     # Feature 4: Satellite count stability
     if 'num_sats' in features.columns:
         features['num_sats_std_5s'] = features['num_sats'].rolling(
-            window=window_5s, min_periods=1
+            window='5s', min_periods=1
         ).std().fillna(0)
     
     # Feature 5: Motion state indicator (stationary vs moving)
@@ -485,4 +496,10 @@ def add_aggregate_features(merged_df: pd.DataFrame) -> pd.DataFrame:
     if 'num_high_elev_sats' in features.columns and 'num_sats_status' in features.columns:
         features['high_qual_sat_ratio'] = features['num_high_elev_sats'] / (features['num_sats_status'] + 1)
     
+    # Restore the original row structure: add back millisSinceGpsEpoch if present and reset index
+    if 'millisSinceGpsEpoch' in features.columns:
+        features = features.reset_index()
+    else:
+        # If millisSinceGpsEpoch not present as column (e.g., was only index), try to recover from index name
+        features = features.reset_index()
     return features
