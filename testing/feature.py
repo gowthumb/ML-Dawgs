@@ -445,9 +445,9 @@ def add_aggregate_features(merged_df: pd.DataFrame) -> pd.DataFrame:
     
     features = merged_df.copy()
     
-    # Assuming 10ms resolution, a 1-second window is 100 data points
-    window_1s = 100 
-    window_5s = 500
+    # At 10 Hz resolution after downsampling, 1-second window is 10 data points
+    window_1s = 10 
+    window_5s = 50
     
     # Feature 1: Rolling std of IMU magnitude (motion stability)
     if 'accel_mag_mean' in features.columns:

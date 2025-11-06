@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import tempfile
 
 # Dependencies from your project (must be in the same directory or environment)
 try:
@@ -23,7 +24,7 @@ except ImportError:
 # ----------- ALL HELPER FUNCTIONS -----------
 # ==========================================
 
-def find_pos_file(drive_id: str, phone_id: str, ppk_output_dir: str = "/Users/avantika/Documents/ML-Dawgs/testing/ppk_output") -> str | None:
+def find_pos_file(drive_id: str, phone_id: str, ppk_output_dir: str = "D:/NTU/Y3S1/SC4000/ML-Dawgs/ppk_output/ppk_output") -> str | None:
     """
     Find the .pos file path for a given drive_id and phone_id.
     """
@@ -47,7 +48,9 @@ def synchronize_imu_time(imu_df: pd.DataFrame, gnss_raw_df: pd.DataFrame) -> pd.
         
     GPS_EPOCH_OFFSET_MILLIS = 315964800000
     imu_df['millisSinceGpsEpoch'] = imu_df['millisSinceBoot'].astype(np.int64) - GPS_EPOCH_OFFSET_MILLIS
+    # Round to 10ms and then coarsen to 100ms bins for 10 Hz representation
     imu_df['millisSinceGpsEpoch'] = imu_df['millisSinceGpsEpoch'].round(-1).astype(np.int64)
+    imu_df['millisSinceGpsEpoch'] = (imu_df['millisSinceGpsEpoch'] // 100) * 100
     imu_df = imu_df.dropna(subset=['millisSinceGpsEpoch'])
     
     return imu_df.reset_index(drop=True)
@@ -149,7 +152,7 @@ def process_logs_to_features(job: dict) -> str | None:
             gnss_sorted,
             on='millisSinceGpsEpoch',
             direction='nearest',
-            tolerance=50,
+            tolerance=100,
             suffixes=('', '_gnss')
         )
         
@@ -241,6 +244,12 @@ def process_logs_to_features(job: dict) -> str | None:
     final_merged_df.ffill(inplace=True)
     final_merged_df.bfill(inplace=True)
 
+    # Ensure clean 10 Hz cadence: drop duplicate timestamps after merges
+    if 'millisSinceGpsEpoch' in final_merged_df.columns:
+        final_merged_df = final_merged_df.sort_values('millisSinceGpsEpoch')
+        final_merged_df = final_merged_df.drop_duplicates(subset=['millisSinceGpsEpoch'], keep='first')
+        final_merged_df = final_merged_df.reset_index(drop=True)
+
     final_merged_df = add_aggregate_features(final_merged_df)
     final_merged_df = pd.DataFrame({}) if final_merged_df is None else final_merged_df
 
@@ -269,7 +278,8 @@ def process_logs_to_features(job: dict) -> str | None:
     final_merged_df = final_merged_df.sort_values('millisSinceGpsEpoch').reset_index(drop=True)
 
     # --- 9. SAVE TO PARQUET (PREFERRED) OR CSV (FALLBACK) ---
-    temp_output_dir = "/tmp/dask_feature_cache_FEATURES" # Cache for features
+    # Cross-platform temp directory for cached feature tables
+    temp_output_dir = os.path.join(tempfile.gettempdir(), "dask_feature_cache_FEATURES")
     os.makedirs(temp_output_dir, exist_ok=True)
     job_id_str = f"{job['drive_id'].replace('/', '_')}_{job['phone_id']}"
         

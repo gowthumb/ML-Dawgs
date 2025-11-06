@@ -173,7 +173,7 @@ def run_dask_hybrid_pipeline(all_jobs: list[dict]) -> pd.DataFrame:
 # --- Main Execution ---
 if __name__ == "__main__":
     # Define the root directory where your 'train' data is located
-    ROOT_DIR = "/Users/avantika/Documents/ML-Dawgs/train"
+    ROOT_DIR = "D:/NTU/Y3S1/SC4000/ML-Dawgs/train"
     
     # 1. Scan for jobs
     all_jobs = find_and_pair_files(ROOT_DIR)
@@ -190,6 +190,29 @@ if __name__ == "__main__":
         
         print(f"   Total features: {len(final_training_set)} rows")
         print(f"   Total columns: {len(final_training_set.columns)}")
+
+        # --- Basic sanity checks on saved data ---
+        try:
+            # Time cadence check (seconds)
+            dt = final_training_set['gpst_sec'].sort_values().diff().dropna()
+            print(f"   gpst_sec dt median: {dt.median():.3f}s, p5: {dt.quantile(0.05):.3f}s, p95: {dt.quantile(0.95):.3f}s")
+        except Exception:
+            pass
+
+        # NaN ratios for key columns
+        key_cols = [c for c in ['ekf_e','ekf_n','ekf_u','gt_e','gt_n','gt_u','accel_mag_mean','gyro_mag_mean','mean_cn0'] if c in final_training_set.columns]
+        if key_cols:
+            na_ratios = final_training_set[key_cols].isna().mean().round(3)
+            print("   NaN ratios:")
+            for k, v in na_ratios.to_dict().items():
+                print(f"     - {k}: {v}")
+        
+        # Error stats
+        err_cols = [c for c in ['err_e','err_n','err_u'] if c in final_training_set.columns]
+        if err_cols:
+            desc = final_training_set[err_cols].describe(percentiles=[0.05,0.5,0.95]).round(3)
+            print("\n   EKF error summary (m):")
+            print(desc.to_string())
     else:
         print("\n⚠️ Pipeline finished but no training data was extracted.")
 

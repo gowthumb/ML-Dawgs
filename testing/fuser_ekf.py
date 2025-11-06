@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import tempfile
 import pymap3d as pm
 from scipy.spatial.transform import Rotation
 
@@ -21,7 +22,7 @@ except ImportError:
 # ----------- EKF HELPER FUNCTIONS -----------
 # ==========================================
 
-def find_pos_file(drive_id: str, phone_id: str, ppk_output_dir: str = "/Users/avantika/Documents/ML-Dawgs/testing/ppk_output") -> str | None:
+def find_pos_file(drive_id: str, phone_id: str, ppk_output_dir: str = "D:/NTU/Y3S1/SC4000/ML-Dawgs/ppk_output/ppk_output") -> str | None:
     """Find the .pos file path for a given drive_id and phone_id."""
     folder_name = f"{drive_id}-{phone_id}"
     pos_file_path = os.path.join(ppk_output_dir, folder_name, "gnss_rinex.pos")
@@ -126,8 +127,9 @@ class EKF15State:
         self.R_nb = self.R_nb @ R_delta
         
         accel_n = self.R_nb @ accel_corrected
-        self.v_nb = self.v_nb + (accel_n + self.g_n) * dt
-        self.p_nb = self.p_nb + self.v_nb * dt + 0.5 * (accel_n + self.g_n) * dt**2
+        # Smartphone UncalAccel typically includes gravity; do not add gravity again
+        self.v_nb = self.v_nb + accel_n * dt
+        self.p_nb = self.p_nb + self.v_nb * dt + 0.5 * accel_n * dt**2
 
         # --- 2. Propagate Error State Covariance ---
         F = np.zeros((15, 15))
@@ -238,6 +240,15 @@ def process_logs_to_ekf_trajectory(job: dict) -> str | None:
     imu_synced = imu_synced.set_index('gpst_sec').interpolate(method='linear').reset_index()
     imu_synced.bfill(inplace=True) # Fill any at the start
 
+    # Downsample IMU stream to 10 Hz by binning to 0.1s and averaging
+    imu_only = imu_synced.copy()
+    imu_only['gpst_sec'] = (imu_only['gpst_sec'] / 0.1).round() * 0.1
+    imu_only = imu_only.groupby('gpst_sec', as_index=False).agg({
+        'accel_x': 'mean', 'accel_y': 'mean', 'accel_z': 'mean',
+        'gyro_x': 'mean', 'gyro_y': 'mean', 'gyro_z': 'mean',
+        'type': 'first'
+    })
+
     # --- 2. Load and Prep POS Data ---
     pos_file_path = find_pos_file(job['drive_id'], job['phone_id'])
     if not pos_file_path:
@@ -258,11 +269,13 @@ def process_logs_to_ekf_trajectory(job: dict) -> str | None:
     gt_pos = pos_enu[gt_cols].copy()
 
     pos_enu['type'] = 'POS'
-    pos_enu = pos_enu[['gpst_sec', 'type', 'gt_e', 'gt_n', 'gt_u', 'mean_quality']] # Use GT as the measurement
+    # Carry both mean_quality and max_quality if available
+    quality_cols = [c for c in ['mean_quality', 'max_quality'] if c in pos_enu.columns]
+    pos_enu = pos_enu[['gpst_sec', 'type', 'gt_e', 'gt_n', 'gt_u'] + quality_cols]
     pos_enu.rename(columns={'gt_e': 'e', 'gt_n': 'n', 'gt_u': 'u'}, inplace=True) # EKF expects 'e', 'n', 'u'
     
     # --- 3. Merge Asynchronous Data ---
-    full_data = pd.concat([imu_synced, pos_enu]).sort_values('gpst_sec').reset_index(drop=True)
+    full_data = pd.concat([imu_only, pos_enu]).sort_values('gpst_sec').reset_index(drop=True)
     full_data['dt_sec'] = full_data['gpst_sec'].diff().fillna(0.01)
     
     # --- 4. Initialize EKF ---
@@ -291,8 +304,14 @@ def process_logs_to_ekf_trajectory(job: dict) -> str | None:
         
         elif row['type'] == 'POS':
             pos_data = row[['e', 'n', 'u']].values
-            pos_quality = row['mean_quality']
-            ekf.update(pos_data, pos_quality)
+            # Prefer max_quality if present; otherwise fall back to mean_quality
+            pos_quality_raw = row['max_quality'] if 'max_quality' in row.index else row.get('mean_quality', 5)
+            # Discretize to integer quality class in [1..6]
+            try:
+                pos_quality_disc = int(np.clip(round(float(pos_quality_raw)), 1, 6))
+            except Exception:
+                pos_quality_disc = 5
+            ekf.update(pos_data, pos_quality_disc)
             
         state = ekf.get_state_dict()
         state['gpst_sec'] = row['gpst_sec']
@@ -320,7 +339,8 @@ def process_logs_to_ekf_trajectory(job: dict) -> str | None:
     final_df['origin_lon'] = origin_lla['lon']
     final_df['origin_h'] = origin_lla['h']
 
-    temp_output_dir = "/tmp/dask_feature_cache_EKF" # New cache folder
+    # Cross-platform temp directory for cached EKF trajectories
+    temp_output_dir = os.path.join(tempfile.gettempdir(), "dask_feature_cache_EKF")
     os.makedirs(temp_output_dir, exist_ok=True)
     job_id_str = f"{job['drive_id'].replace('/', '_')}_{job['phone_id']}"
     output_path = os.path.join(temp_output_dir, f"{job_id_str}.parquet")
