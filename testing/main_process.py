@@ -24,20 +24,26 @@ def find_and_pair_files(root_dir: str) -> list[dict]:
     """
     Scans a directory structure (DRIVE_ID/PHONE_FOLDER/...) to find and pair
     GNSS (device_gnss.csv) and IMU (device_imu.csv) log files.
+    Also finds ground_truth.csv in the same folders.
     """
     paired_jobs = []
     for root, _, files in os.walk(root_dir):
         gnss_file = None
         imu_file = None
+        gt_file = None
         if 'device_gnss.csv' in files:
             gnss_file = os.path.join(root, 'device_gnss.csv')
         if 'device_imu.csv' in files:
             imu_file = os.path.join(root, 'device_imu.csv')
+        if 'ground_truth.csv' in files:
+            gt_file = os.path.join(root, 'ground_truth.csv')
         
         if gnss_file and imu_file:
             phone_id = os.path.basename(root)
             drive_id = os.path.basename(os.path.dirname(root)) 
             job = {'drive_id': drive_id, 'phone_id': phone_id, 'gnss_file': gnss_file, 'imu_file': imu_file}
+            if gt_file:
+                job['ground_truth_file'] = gt_file
             paired_jobs.append(job)
             
     return paired_jobs
@@ -69,6 +75,82 @@ def read_cache_file(path: str) -> pd.DataFrame:
         print(f"⚠️ Error reading {path}: {e}")
         return pd.DataFrame({})
 
+
+def read_ground_truth(gt_path: str, drive_id: str, phone_id: str) -> pd.DataFrame:
+    """Reads and normalizes ground truth CSV from a single phone folder.
+    Tries multiple time/position column variants.
+    Adds drive_id and phone_id from parameters.
+    """
+    if not os.path.exists(gt_path):
+        return pd.DataFrame({})
+    try:
+        gt = pd.read_csv(gt_path)
+    except Exception as e:
+        print(f"⚠️ Failed to read ground truth from {gt_path}: {e}")
+        return pd.DataFrame({})
+
+    # Normalize position column names
+    rename_map = {}
+    # Common alternatives
+    if 'lat' in gt.columns and 'latitude' not in gt.columns:
+        rename_map['lat'] = 'latitude'
+    if 'LatitudeDegrees' in gt.columns:
+        rename_map['LatitudeDegrees'] = 'latitude'
+    if 'lon' in gt.columns and 'longitude' not in gt.columns:
+        rename_map['lon'] = 'longitude'
+    if 'LongitudeDegrees' in gt.columns:
+        rename_map['LongitudeDegrees'] = 'longitude'
+    if 'h' in gt.columns and 'height' not in gt.columns:
+        rename_map['h'] = 'height'
+    if 'HeightMeters' in gt.columns:
+        rename_map['HeightMeters'] = 'height'
+    if 'AltitudeMeters' in gt.columns:
+        rename_map['AltitudeMeters'] = 'height'
+    gt = gt.rename(columns=rename_map)
+
+    # Time normalization: accept several possibilities
+    gps_epoch_offset_ms = 315964800000
+    if 'millisSinceGpsEpoch' in gt.columns:
+        gt['millisSinceGpsEpoch'] = pd.to_numeric(gt['millisSinceGpsEpoch'], errors='coerce').round(-1).astype('Int64')
+    elif 'gpst_sec' in gt.columns:
+        gt['millisSinceGpsEpoch'] = (pd.to_numeric(gt['gpst_sec'], errors='coerce') * 1000.0).round(-1).astype('Int64')
+    elif 'utcTimeMillis' in gt.columns:
+        # Convert Unix epoch ms to GPS epoch ms
+        gt['millisSinceGpsEpoch'] = (pd.to_numeric(gt['utcTimeMillis'], errors='coerce') - gps_epoch_offset_ms).round(-1).astype('Int64')
+    elif 'UnixTimeMillis' in gt.columns:
+        # Some GT files use UnixTimeMillis (Unix epoch ms)
+        gt['millisSinceGpsEpoch'] = (pd.to_numeric(gt['UnixTimeMillis'], errors='coerce') - gps_epoch_offset_ms).round(-1).astype('Int64')
+    elif 'TimeNanos' in gt.columns:
+        # Convert ns device clock to ms GPS epoch if absolute; if relative, this may be unusable
+        # Heuristic: if values are ~1e18, treat as Unix ns
+        tn = pd.to_numeric(gt['TimeNanos'], errors='coerce')
+        if tn.notna().any():
+            # Assume Unix ns then convert to GPS ms
+            ms_unix = (tn / 1_000_000.0)
+            gt['millisSinceGpsEpoch'] = (ms_unix - gps_epoch_offset_ms).round(-1).astype('Int64')
+    else:
+        print(f"⚠️ Ground truth missing recognizable time column in {gt_path}")
+        return pd.DataFrame({})
+
+    # Add drive_id and phone_id if not present
+    if 'drive_id' not in gt.columns:
+        gt['drive_id'] = drive_id
+    if 'phone_id' not in gt.columns:
+        gt['phone_id'] = phone_id
+
+    # Drop rows with missing essentials
+    gt = gt.dropna(subset=['millisSinceGpsEpoch'])
+
+    # Basic required columns check (positions)
+    pos_required = ['latitude', 'longitude', 'height']
+    if not all(c in gt.columns for c in pos_required):
+        print(f"⚠️ Ground truth missing required position columns in {gt_path}. Found: {list(gt.columns)}")
+        return pd.DataFrame({})
+
+    # Ensure integer ms
+    gt['millisSinceGpsEpoch'] = gt['millisSinceGpsEpoch'].astype(np.int64)
+
+    return gt[['drive_id', 'phone_id', 'millisSinceGpsEpoch', 'latitude', 'longitude', 'height']].copy()
 
 def run_dask_hybrid_pipeline(all_jobs: list[dict]) -> pd.DataFrame:
     """
@@ -163,6 +245,98 @@ def run_dask_hybrid_pipeline(all_jobs: list[dict]) -> pd.DataFrame:
         final_training_df.dropna(subset=['err_e', 'err_n', 'err_u'], inplace=True)
         
         print(f"Final training set created with {len(final_training_df)} aligned rows.")
+        # Additionally: create POS-vs-GT residual dataset for ML correction model
+        try:
+            # Collect all ground truth files from jobs
+            all_gt_dfs = []
+            for job in all_jobs:
+                if 'ground_truth_file' in job:
+                    gt_df = read_ground_truth(job['ground_truth_file'], job['drive_id'], job['phone_id'])
+                    if not gt_df.empty:
+                        all_gt_dfs.append(gt_df)
+            
+            if all_gt_dfs:
+                gt_df_combined = pd.concat(all_gt_dfs, ignore_index=True)
+                print(f"Loaded ground truth from {len(all_gt_dfs)} files ({len(gt_df_combined)} rows)")
+                
+                # Merge GT onto features timeline per drive/phone (nearest time, 500ms)
+                features_t = full_features_df.copy()
+                features_t['millisSinceGpsEpoch'] = features_t['millisSinceGpsEpoch'].round(-1).astype(np.int64)
+                gt_df_combined['millisSinceGpsEpoch'] = gt_df_combined['millisSinceGpsEpoch'].round(-1).astype(np.int64)
+                # Ensure consistent dtypes and strict sorting for merge_asof
+                for df_ in (features_t, gt_df_combined):
+                    df_['drive_id'] = df_['drive_id'].astype(str)
+                    df_['phone_id'] = df_['phone_id'].astype(str)
+                
+                # Sort and reset index to ensure clean state for merge_asof
+                left_sorted = features_t.sort_values(['drive_id', 'phone_id', 'millisSinceGpsEpoch'], kind='mergesort').reset_index(drop=True)
+                right_sorted = gt_df_combined.sort_values(['drive_id', 'phone_id', 'millisSinceGpsEpoch'], kind='mergesort').reset_index(drop=True)
+                
+                # Verify sorting is correct (within each by-group, time must be monotonic)
+                # If merge_asof still fails, we'll do per-group merges
+                try:
+                    gt_merged = pd.merge_asof(
+                        left_sorted,
+                        right_sorted,
+                        on='millisSinceGpsEpoch',
+                        by=['drive_id', 'phone_id'],
+                        direction='nearest',
+                        tolerance=500,
+                        suffixes=('', '_gt')
+                    )
+                except ValueError as e:
+                    # Fallback: merge per group manually
+                    print(f"⚠️ merge_asof with 'by' failed, using per-group merge: {e}")
+                    gt_merged_list = []
+                    for (d_id, p_id), left_group in left_sorted.groupby(['drive_id', 'phone_id']):
+                        right_group = right_sorted[(right_sorted['drive_id'] == d_id) & (right_sorted['phone_id'] == p_id)]
+                        if not right_group.empty:
+                            left_group_sorted = left_group.sort_values('millisSinceGpsEpoch').reset_index(drop=True)
+                            right_group_sorted = right_group.sort_values('millisSinceGpsEpoch').reset_index(drop=True)
+                            merged_group = pd.merge_asof(
+                                left_group_sorted,
+                                right_group_sorted,
+                                on='millisSinceGpsEpoch',
+                                direction='nearest',
+                                tolerance=500,
+                                suffixes=('', '_gt')
+                            )
+                            gt_merged_list.append(merged_group)
+                    if gt_merged_list:
+                        gt_merged = pd.concat(gt_merged_list, ignore_index=True)
+                    else:
+                        raise ValueError("No groups could be merged")
+
+                # Compute POS -> GT residuals (GT - POS) in deg and meters
+                if all(c in gt_merged.columns for c in ['mean_latitude', 'mean_longitude', 'mean_height', 'latitude', 'longitude', 'height']):
+                    dlat = gt_merged['latitude'] - gt_merged['mean_latitude']
+                    dlon = gt_merged['longitude'] - gt_merged['mean_longitude']
+                    dhu = gt_merged['height'] - gt_merged['mean_height']
+                    gt_merged['residual_lat_deg'] = dlat
+                    gt_merged['residual_lon_deg'] = dlon
+                    gt_merged['residual_h_m'] = dhu
+                    # Approximate meters using local scale
+                    lat_rad = np.radians(gt_merged['mean_latitude'].clip(-89.999, 89.999))
+                    gt_merged['residual_n_m'] = dlat * 111000.0
+                    gt_merged['residual_e_m'] = dlon * 111000.0 * np.cos(lat_rad)
+                    gt_merged['residual_u_m'] = dhu
+
+                    # Save POS residual dataset
+                    pos_out = 'pos_residual_training_set.csv'
+                    gt_merged.to_csv(pos_out, index=False)
+                    print(f"\n✅ POS residual training set saved to {pos_out} ({len(gt_merged)} rows)")
+                    print(f"   Residual stats (m): E={gt_merged['residual_e_m'].mean():.2f}±{gt_merged['residual_e_m'].std():.2f}, "
+                          f"N={gt_merged['residual_n_m'].mean():.2f}±{gt_merged['residual_n_m'].std():.2f}, "
+                          f"U={gt_merged['residual_u_m'].mean():.2f}±{gt_merged['residual_u_m'].std():.2f}")
+                else:
+                    print("⚠️ Skipping POS residual output: required POS/GT columns missing.")
+            else:
+                print("⚠️ No ground truth files found in any phone folders.")
+        except Exception as e:
+            print(f"⚠️ POS residual dataset creation failed: {e}")
+            import traceback
+            traceback.print_exc()
+
         return final_training_df
             
     except Exception as e:
