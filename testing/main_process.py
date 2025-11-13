@@ -133,7 +133,7 @@ def run_dask_pipeline(all_jobs: list[dict]) -> pd.DataFrame:
 
 if __name__ == "__main__":
     # Define the root directory where your 'train' data is located
-    ROOT_DIR = r"C:\Users\avnee\Downloads\smartphone-decimeter-2022\train"
+    ROOT_DIR = r"C:\Users\avnee\Downloads\smartphone-decimeter-2022\test"
 
     # 1. Scan for jobs
     all_jobs = find_and_pair_files(ROOT_DIR)
