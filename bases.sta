@@ -1,0 +1,11 @@
+%  LATITUDE(DEG) LONGITUDE(DEG)    HEIGHT(M)   NAME
+% Format: lat lon height station_name
+% RTKLIB uses first 4 characters of base station filename to match
+% For SUTB (Sutter Buttes) station - Bay Area
+39.205841  -121.820600  615.0  SUTB
+% For P222 station - Bay Area  
+37.53924080  -122.08326860  53.605  P222
+% For VDCY station - LA area
+34.17856659  -118.22000501  318.230  VDCY
+% For SLAC station - Bay Area
+37.41652004  -122.20426728  63.678  SLAC
